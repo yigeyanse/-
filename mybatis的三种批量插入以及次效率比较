@@ -1,0 +1,196 @@
+1.表结构
+
+复制代码
+CREATE TABLE `t_user` (
+  `id` varchar(32) CHARACTER SET utf8 NOT NULL COMMENT '主键',
+  `name` varchar(50) CHARACTER SET utf8 DEFAULT NULL COMMENT '用户名',
+  `del_flag` char(1) CHARACTER SET utf8 DEFAULT NULL COMMENT '删除标示',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+复制代码
+ 
+
+  2.1 jdbc.properties配置
+
+复制代码
+mysql.driver=com.mysql.jdbc.Driver
+mysql.url=jdbc:mysql://127.0.0.1:3306/ssm
+mysql.username=root
+mysql.password=admin
+#定义初始连接数
+mysql.initialSize=1
+#定义最大连接数
+mysql.maxActive=20
+#定义最大空闲
+mysql.maxIdle=20
+#定义最小空闲
+mysql.minIdle=1
+#定义最长等待时间
+mysql.maxWait=60000
+复制代码
+ 
+ 2.2 spring-mybatis.xml配置
+
+复制代码
+<context:component-scan base-package="com.win.ssm"/>
+<context:property-placeholder location="classpath:jdbc.properties"/>
+<bean id="dataSource" class="org.apache.commons.dbcp.BasicDataSource" destroy-method="close">
+    <property name="driverClassName" value="${mysql.driver}"/>
+    <property name="url" value="${mysql.url}"/>
+    <property name="username" value="${mysql.username}"/>
+    <property name="password" value="${mysql.password}"/>
+    <!-- 初始化链接大小-->
+<property name="initialSize" value="${mysql.initialSize}"/>
+    <!-- 连接池最大数量-->
+<property name="maxActive" value="${mysql.maxActive}"/>
+    <!-- 连接池最大空闲-->
+<property name="maxIdle" value="${mysql.maxIdle}"/>
+    <!-- 连接池最小空闲 -->
+<property name="minIdle" value="${mysql.minIdle}"></property>
+    <!-- 获取连接最大等待时间-->
+<property name="maxWait" value="${mysql.maxWait}"/>
+</bean>
+<!-- spring与mybatis整合类 -->
+<bean id="sqlSessionFactory" class="org.mybatis.spring.SqlSessionFactoryBean">
+    <property name="dataSource" ref="dataSource"/>
+    <!-- 查找接口的别名 -->
+<property name="typeAliasesPackage" value="com.win"/>
+    <!-- 自动扫描mapping.xml文件-->
+<property name="mapperLocations" value="classpath:/mapping/*.xml"/>
+</bean>
+
+<bean id="sqlSessionTemplate" class="org.mybatis.spring.SqlSessionTemplate">
+    <constructor-arg index="0" ref="sqlSessionFactory" />
+    <!--<constructor-arg index="1" value="BATCH" />-->
+</bean>
+
+<!-- 扫描DAO接口 -->
+<bean id="mapperScannerConfigurer" class="org.mybatis.spring.mapper.MapperScannerConfigurer">
+    <property name="basePackage" value="com.win.ssm.dao"/>
+    <property name="sqlSessionFactoryBeanName" value="sqlSessionFactory"/>
+</bean>
+<!-- 事务管理 -->
+<bean class="org.springframework.jdbc.datasource.DataSourceTransactionManager">
+    <property name="dataSource" ref="dataSource"/>
+</bean>
+复制代码
+ 
+
+
+第一种：普通for循环插入
+
+ ①junit类
+
+复制代码
+@Test
+public void testInsertBatch2() throws Exception {
+    long start = System.currentTimeMillis();
+    User user;
+    SqlSession sqlSession = sqlSessionTemplate.getSqlSessionFactory().openSession(false);
+    UserDao mapper = sqlSession.getMapper(UserDao.class);
+    for (int i = 0; i < 500; i++) {
+        user = new User();
+        user.setId("test" + i);
+        user.setName("name" + i);
+        user.setDelFlag("0");
+        mapper.insert(user);
+    }
+    sqlSession.commit();
+    long end = System.currentTimeMillis();
+    System.out.println("---------------" + (start - end) + "---------------");
+}
+复制代码
+ 
+
+  ②xml配置
+
+<insert id="insert">
+    INSERT INTO t_user (id, name, del_flag)
+          VALUES(#{id}, #{name}, #{delFlag})
+</insert>
+ 
+
+
+第二种：mybatis BATCH模式插入
+
+ ①junit类
+
+ 
+
+复制代码
+@Test
+public void testInsertBatch2() throws Exception {
+    long start = System.currentTimeMillis();
+    User user;
+    SqlSession sqlSession = sqlSessionTemplate.getSqlSessionFactory().openSession(ExecutorType.BATCH, false);//跟上述sql区别
+    UserDao mapper = sqlSession.getMapper(UserDao.class);
+    for (int i = 0; i < 500; i++) {
+        user = new User();
+        user.setId("test" + i);
+        user.setName("name" + i);
+        user.setDelFlag("0");
+        mapper.insert(user);
+    }
+    sqlSession.commit();
+    long end = System.currentTimeMillis();
+    System.out.println("---------------" + (start - end) + "---------------");
+}
+复制代码
+ 
+
+
+  ②xml配置与第一种②中使用相同
+
+第三种：foreach方式插入
+
+ ①junit类
+
+复制代码
+@Test
+public void testInsertBatch() throws Exception {
+    long start = System.currentTimeMillis();
+    List<User> list = new ArrayList<>();
+    User user;
+    for (int i = 0; i < 10000; i++) {
+        user = new User();
+        user.setId("test" + i);
+        user.setName("name" + i);
+        user.setDelFlag("0");
+        list.add(user);
+    }
+    userService.insertBatch(list);
+    long end = System.currentTimeMillis();
+    System.out.println("---------------" + (start - end) + "---------------");
+}
+复制代码
+ 
+
+
+ ②xml配置
+
+复制代码
+<insert id="insertBatch">
+    INSERT INTO t_user
+            (id, name, del_flag)
+    VALUES
+    <foreach collection ="list" item="user" separator =",">
+         (#{user.id}, #{user.name}, #{user.delFlag})
+    </foreach >
+</insert>
+复制代码
+ 
+
+特别注意：mysql默认接受sql的大小是1048576(1M)，即第三种方式若数据量超过1M会报如下异常：（可通过调整MySQL安装目录下的my.ini文件中[mysqld]段的＂max_allowed_packet = 1M＂）
+
+nested exception is com.mysql.jdbc.PacketTooBigException: Packet for query is too large (5677854 > 1048576).
+
+You can change this value on the server by setting the max_allowed_packet' variable.
+ 
+
+结果对比：
+
+第一种	第二种	第三种
+500条	7742	7388	622
+1000条	15290	15078	746
+5000条	78011	177350	1172
+10000条	397472	201180	1205
